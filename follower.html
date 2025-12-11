@@ -1,0 +1,462 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8" />
+  <title>AR.js Barcodes + Popup Pins</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <link rel="icon" href="data:;base64,iVBORw0KGgo=">
+
+  <!-- A-Frame (1.6.0) and AR.js (3.4.7) — iOS-friendly builds -->
+  <script src="https://aframe.io/releases/1.6.0/aframe.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/gh/AR-js-org/AR.js@3.4.7/aframe/build/aframe-ar.min.js"></script>
+
+  <!-- look-at component for billboard effect -->
+  <script src="https://unpkg.com/aframe-look-at-component@0.8.0/dist/aframe-look-at-component.min.js"></script>
+
+  <style>
+    html,
+    body {
+      height: 100%;
+    }
+
+    body {
+      margin: 0;
+      overflow: hidden;
+      background: #000;
+    }
+
+    #instruction {
+      position: fixed;
+      top: 10px;
+      left: 50%;
+      transform: translateX(-50%);
+      color: white;
+      font-family: sans-serif;
+      font-size: 22px;
+      font-weight: bold;
+      text-shadow: 0 0 5px black;
+      z-index: 20;
+      pointer-events: none;
+      /* don't block taps */
+    }
+
+    #popup {
+      position: fixed;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(255, 255, 255, 0.95);
+      border-radius: 8px;
+      padding: 20px 20px 24px;
+      width: 300px;
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.4);
+      font-family: sans-serif;
+      /* display: none; */
+      z-index: 20;
+    }
+
+    #popup h2 {
+      margin: 0;
+      font-size: 20px;
+      color: #333;
+    }
+
+    #popup p {
+      margin-top: 8px;
+      color: #555;
+    }
+
+    #popup .close-btn {
+      position: absolute;
+      top: 6px;
+      right: 6px;
+      cursor: pointer;
+      font-size: 28px;
+      font-weight: bold;
+      color: #333;
+      width: 36px;
+      height: 36px;
+      line-height: 36px;
+      text-align: center;
+      border-radius: 6px;
+      user-select: none;
+    }
+
+    #popup .close-btn:active {
+      background: rgba(0, 0, 0, 0.08);
+    }
+
+    .links {
+      display: flex;
+      gap: 10px;
+      width: 100%;
+      justify-content: start;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .link {
+      color: #333;
+      text-decoration: none;
+      font-size: 16px;
+      font-weight: bold;
+      padding: 10px;
+      border-radius: .5rem;
+      background-color: #dedede;
+    }
+
+    .divider {
+      height: 1px;
+      border-top: 1px solid #dedede;
+      padding-left: 10px;
+      padding-right: 10px;
+      margin: 10px 0;
+    }
+
+    /* Tap ripple overlay */
+    #tapfx {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      /* never block interactions */
+      z-index: 40;
+      /* above popup */
+    }
+
+    .ripple {
+      position: fixed;
+      width: 20px;
+      height: 20px;
+      border-radius: 999px;
+      border: 2px solid var(--ripple-color, #4CAF50);
+      opacity: 0.95;
+      transform: translate(-50%, -50%) scale(0.3);
+      animation: ripple-out 520ms ease-out forwards;
+    }
+
+    .ripple.miss {
+      --ripple-color: #F44336;
+    }
+
+    /* red for misses */
+    .ripple.hit {
+      --ripple-color: #4CAF50;
+    }
+
+    /* green for hits */
+    @keyframes ripple-out {
+      0% {
+        opacity: 0.95;
+        transform: translate(-50%, -50%) scale(0.3);
+      }
+
+      100% {
+        opacity: 0;
+        transform: translate(-50%, -50%) scale(3.2);
+      }
+    }
+  </style>
+</head>
+
+<body>
+
+  <div id="instruction">Tap a pin to learn more</div>
+
+  <div id="popup" role="dialog" aria-modal="true" aria-labelledby="popup-title">
+    <div class="close-btn" onclick="document.getElementById('popup').style.display='none'" aria-label="Close">×</div>
+    <h2 id="popup-title">Title</h2>
+    <p id="popup-desc">This is a description</p>
+    <div class="divider"></div>
+    <div class="links">
+      <a class="link" href="https://www.google.com" target="_blank">Google</a>
+      <a class="link" href="https://www.youtube.com" target="_blank">YouTube</a>
+      <a class="link" href="https://www.facebook.com" target="_blank">Facebook</a>
+      <a class="link" href="https://www.instagram.com" target="_blank">Instagram</a>
+    </div>
+  </div>
+
+  <!-- Tap ripple container -->
+  <div id="tapfx" aria-hidden="true"></div>
+
+  <!-- AR scene -->
+  <a-scene embedded vr-mode-ui="enabled: false" renderer="logarithmicDepthBuffer: true"
+    arjs="sourceType: webcam; debugUIEnabled: false; detectionMode: mono_and_matrix; matrixCodeType: 3x3;"
+    id="sceneRoot">
+    <a-assets>
+      <a-asset-item id="pin" src="models/pin/scene.gltf"></a-asset-item>
+    </a-assets>
+
+    <!-- Camera. For marker tracking, remove look-controls to avoid iOS motion permission issues -->
+    <a-entity camera>
+      <a-entity cursor="fuse: false; rayOrigin: mouse;"
+        raycaster="objects: .clickable; recursive: true; near: 0.001; far: 2000">
+      </a-entity>
+    </a-entity>
+  </a-scene>
+
+  <!-- iOS inline video kickstart: ensure the hidden camera <video> plays inline and updates frames -->
+  <script>
+    function kickstartARVideo() {
+      const v = document.querySelector('#arjs-video, video[playsinline][autoplay]') || document.querySelector('video');
+      if (!v) return;
+      v.setAttribute('playsinline', 'true');
+      v.setAttribute('webkit-playsinline', 'true');
+      v.muted = true;  // iOS requires muted for autoplay
+      v.autoplay = true;
+      if (v.play) { try { v.play(); } catch (e) { } }
+    }
+
+    document.addEventListener('DOMContentLoaded', kickstartARVideo, { once: true });
+    // First touch counts as a user gesture to unlock playback on iOS
+    window.addEventListener('touchend', function once() {
+      kickstartARVideo();
+      window.removeEventListener('touchend', once);
+    }, { passive: true, once: true });
+  </script>
+
+  <script>
+    /* Global popup + marker data */
+    const popupData = [
+      { title: "Monte San Giorgio", description: "Il Monte San Giorgio è un monte nel sud del Canton Ticino in Svizzera...", id: 0 },
+      { title: "Pin 1", description: "This pin belongs to marker 1.", id: 1 },
+      { title: "Pin 2", description: "This pin belongs to marker 2.", id: 2 },
+      { title: "Pin 3", description: "This pin belongs to marker 3.", id: 3 }
+    ];
+
+    /* Build markers with pin, floating text, and a transparent 3D hit box */
+    const scene = document.getElementById("sceneRoot");
+
+    popupData.forEach((item, idx) => {
+      const marker = document.createElement("a-marker");
+      marker.setAttribute("type", "barcode");
+      marker.setAttribute("value", item.id);
+      marker.setAttribute("id", "marker-" + item.id);
+
+      // Pin model (fixed orientation)
+      const pin = document.createElement("a-entity");
+      pin.setAttribute("position", "0 0 0");
+      pin.setAttribute("scale", "10 10 10");
+      pin.setAttribute("gltf-model", "#pin");
+      pin.dataset.idx = idx;
+
+      // Tap feedback on pin
+      pin.setAttribute('animation__pulse',
+        'startEvents: pulse; property: scale; from: 10 10 10; to: 12.5 12.5 12.5; dir: alternate; dur: 120; easing: easeOutCubic; loop: 1');
+
+      marker.appendChild(pin);
+
+      // Floating 3D text above pin (faces camera)
+      const label = document.createElement("a-text");
+      label.setAttribute("value", item.title);
+      label.setAttribute("align", "center");
+      label.setAttribute("color", "#FFFFFF");
+      label.setAttribute("position", "0 6 0"); // above the pin
+      label.setAttribute("scale", "3 3 3");
+      label.setAttribute("side", "double");
+      label.setAttribute("look-at", "[camera]");
+      label.dataset.idx = idx;
+
+      // Optional: small label pulse
+      label.setAttribute('animation__lpulse',
+        'startEvents: lpulse; property: scale; from: 3 3 3; to: 3.6 3.6 3.6; dir: alternate; dur: 120; easing: easeOutCubic; loop: 1');
+
+      marker.appendChild(label);
+
+      // Transparent 3D hit box — sized after model loads to cover pin + label
+      const hitBox = document.createElement("a-box");
+      hitBox.setAttribute("material", "color: #FFF; opacity: 0.001; transparent: true");
+      hitBox.classList.add("clickable");
+      hitBox.dataset.idx = idx;
+      marker.appendChild(hitBox);
+
+      scene.appendChild(marker);
+
+      // Popup + feedback
+      const showPopup = () => {
+        pin.emit('pulse');
+        label.emit('lpulse');
+        if (navigator.vibrate) { try { navigator.vibrate(15); } catch (e) { } }
+        document.getElementById("popup-title").innerText = item.title;
+        document.getElementById("popup-desc").innerText = item.description;
+        document.getElementById("popup").style.display = "block";
+      };
+
+      // Size & position the hit box after the GLTF model has loaded (accurate bounds)
+      const sizeHitBox = () => {
+        const THREE = window.THREE;
+        const modelObj = pin.getObject3D('mesh') || pin.object3D;
+        if (!modelObj || !marker.object3D) return;
+
+        const boxWorld = new THREE.Box3().setFromObject(modelObj);
+
+        // Convert bounds to MARKER-LOCAL space
+        const minLocal = boxWorld.min.clone();
+        const maxLocal = boxWorld.max.clone();
+        marker.object3D.worldToLocal(minLocal);
+        marker.object3D.worldToLocal(maxLocal);
+
+        const minX = Math.min(minLocal.x, maxLocal.x);
+        const maxX = Math.max(minLocal.x, maxLocal.x);
+        const minY = Math.min(minLocal.y, maxLocal.y);
+        const maxY = Math.max(minLocal.y, maxLocal.y);
+        const minZ = Math.min(minLocal.z, maxLocal.z);
+        const maxZ = Math.max(minLocal.z, maxLocal.z);
+
+        // Label vertical extent (heuristic)
+        const labelPos = label.object3D.position; // marker-local
+        const labelScale = label.getAttribute('scale') || { x: 3, y: 3, z: 3 };
+        const labelHalfH = 0.45 * labelScale.y; // ~0.9 per scale unit
+
+        // Total vertical range: from model bottom to top of label
+        const marginY = 0.4;
+        const bottomY = minY;
+        const topY = Math.max(maxY, labelPos.y + labelHalfH);
+        const totalH = (topY - bottomY) + marginY;
+
+        // Width/Depth with small margins
+        const marginX = 0.3;
+        const marginZ = 0.3;
+        const totalW = (maxX - minX) + marginX;
+        const totalD = (maxZ - minZ) + marginZ;
+
+        // Center of the box in marker-local space
+        const centerX = (minX + maxX) / 2;
+        const centerZ = (minZ + maxZ) / 2;
+        const centerY = bottomY + totalH / 2;
+
+        // Apply size & position (marker-local)
+        hitBox.setAttribute('position', `${centerX} ${centerY} ${centerZ}`);
+        hitBox.setAttribute('width', totalW);
+        hitBox.setAttribute('height', totalH);
+        hitBox.setAttribute('depth', totalD);
+      };
+
+      pin.addEventListener('model-loaded', sizeHitBox);
+
+      // If the label changes (text/scale/position), recompute hit box
+      label.addEventListener('componentchanged', (e) => {
+        const n = e.detail && e.detail.name;
+        if (n === 'value' || n === 'scale' || n === 'position' || n === 'text') {
+          sizeHitBox();
+        }
+      });
+
+      // Click handlers (A-Frame cursor/raycaster path)
+      hitBox.addEventListener("click", showPopup);
+      pin.addEventListener("click", showPopup);
+      label.addEventListener("click", showPopup);
+    });
+
+    /* ------- Screen ripple + manual touch → raycast fallback ------- */
+    scene.addEventListener('loaded', () => {
+      const THREE = window.THREE;
+      const raycaster = new THREE.Raycaster();
+      const mouse = new THREE.Vector2();
+      const fx = document.getElementById('tapfx');
+      let lastTouchTime = 0;
+
+      function getCanvas() {
+        return scene.canvas || (scene.renderer && scene.renderer.domElement);
+      }
+
+      function visibleClickableObjects() {
+        const els = Array.from(document.querySelectorAll('.clickable'));
+        return els
+          .filter(el => {
+            let m = el;
+            while (m && m.tagName !== 'A-MARKER') m = m.parentEl;
+            return m && m.object3D && m.object3D.visible;
+          })
+          .map(el => el.object3D)
+          .filter(Boolean);
+      }
+
+      function getPoint(ev) {
+        const t = ev.touches ? ev.touches[0] : ev.changedTouches ? ev.changedTouches[0] : ev;
+        return { x: t.clientX, y: t.clientY };
+      }
+
+      function ndcFromEvent(ev, canvas) {
+        const p = getPoint(ev);
+        const rect = canvas.getBoundingClientRect();
+        mouse.x = ((p.x - rect.left) / rect.width) * 2 - 1;
+        mouse.y = -((p.y - rect.top) / rect.height) * 2 + 1;
+        return p;
+      }
+
+      function rippleAt(x, y, isHit) {
+        const el = document.createElement('div');
+        el.className = `ripple ${isHit ? 'hit' : 'miss'}`;
+        el.style.left = `${x}px`;
+        el.style.top = `${y}px`;
+        fx.appendChild(el);
+        el.addEventListener('animationend', () => el.remove());
+        setTimeout(() => el.remove(), 700);
+      }
+
+      function findEntityFromObject(obj) {
+        let cur = obj;
+        while (cur && !cur.el) cur = cur.parent;
+        return cur && cur.el ? cur.el : null;
+      }
+
+      function onTap(ev) {
+        const now = Date.now();
+        if (ev.type === 'click' && now - lastTouchTime < 400) return; // avoid double-fire after touch
+        if (ev.type.startsWith('touch')) lastTouchTime = now;
+
+        const canvas = getCanvas();
+        if (!canvas || !scene.camera) return;
+
+        const screenPt = ndcFromEvent(ev, canvas);
+
+        raycaster.setFromCamera(mouse, scene.camera);
+        const targets = visibleClickableObjects();
+        const hits = raycaster.intersectObjects(targets, true);
+
+        rippleAt(screenPt.x, screenPt.y, hits.length > 0);
+
+        if (!hits.length) return;
+
+        // nearest intersection
+        const el = findEntityFromObject(hits[0].object);
+        if (!el) return;
+
+        // bubble up to an element that carries the idx
+        let clickableEl = el;
+        while (clickableEl && !clickableEl.dataset?.idx) {
+          clickableEl = clickableEl.parentEl;
+        }
+        if (!clickableEl) return;
+
+        const idx = clickableEl.dataset.idx;
+        const data = popupData[idx];
+        if (!data) return;
+
+        // Trigger pin/label pulses + haptic
+        const marker = document.querySelector(`#marker-${data.id}`);
+        if (marker) {
+          const pin = Array.from(marker.children).find(n => n.getAttribute && n.getAttribute('gltf-model'));
+          const label = Array.from(marker.children).find(n => n.tagName === 'A-TEXT');
+          if (pin) pin.emit('pulse');
+          if (label) label.emit('lpulse');
+        }
+        if (navigator.vibrate) { try { navigator.vibrate(15); } catch (e) { } }
+
+        // Show popup
+        document.getElementById("popup-title").innerText = data.title;
+        document.getElementById("popup-desc").innerText = data.description;
+        document.getElementById("popup").style.display = "block";
+      }
+
+      const canvas = getCanvas();
+      if (canvas) {
+        canvas.addEventListener('touchstart', onTap, { passive: true });
+        canvas.addEventListener('click', onTap);
+      }
+    });
+  </script>
+</body>
+
+</html>
